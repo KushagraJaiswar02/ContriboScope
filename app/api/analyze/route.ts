@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { analyzeRepository } from '@/lib/github/analyzer';
 import { lingo } from '@/lib/lingo';
-import OpenAI from 'openai';
+import { GoogleGenAI } from '@google/genai';
 
 // Assuming you add OPENAI_API_KEY to your .env.local
 // Instantiation moved inside POST handler to prevent build errors
@@ -26,8 +26,8 @@ export async function POST(request: Request) {
         // Pass session token if you implement passing it from the frontend to avoid rate limits
         const metrics = await analyzeRepository(owner, repo);
 
-        const openai = new OpenAI({
-            apiKey: process.env.OPENAI_API_KEY || 'dummy_key',
+        const ai = new GoogleGenAI({
+            apiKey: process.env.GEMINI_API_KEY || 'dummy_key',
         });
 
         // 2. Generate AI Summary using OpenAI
@@ -43,13 +43,13 @@ export async function POST(request: Request) {
 
         let aiSummary = "Summary generation failed.";
         try {
-            const completion = await openai.chat.completions.create({
-                messages: [{ role: "user", content: prompt }],
-                model: "gpt-4o-mini",
+            const response = await ai.models.generateContent({
+                model: 'gemini-2.5-flash',
+                contents: prompt,
             });
-            aiSummary = completion.choices[0]?.message?.content || aiSummary;
+            aiSummary = response.text || aiSummary;
         } catch (e: any) {
-            console.error("OpenAI Error", e);
+            console.error("Gemini Error", e);
             // Fallback or ignore in case no key is provided during day 1/2 demo
             aiSummary = `The repository has a ${metrics.busFactor.riskLevel} contributor risk, and ${metrics.maintainerActivity.speedRating.toLowerCase()} maintainer response times. It scored ${metrics.friendliness.score}/3 on friendliness indicators.`;
         }
