@@ -30,7 +30,7 @@ export async function POST(request: Request) {
             apiKey: process.env.GEMINI_API_KEY || 'dummy_key',
         });
 
-        // 2. Generate AI Summary using OpenAI
+        // 2. Generate AI Summary using Gemini
         const prompt = `
       You are a wise open-source mentor. I have analyzed the repository ${owner}/${repo}.
       Here are the metrics:
