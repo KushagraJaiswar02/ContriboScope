@@ -18,6 +18,8 @@ export const metadata: Metadata = {
   description: "Open-source contribution intelligence platform",
 };
 
+import { Navbar } from "@/components/navbar";
+
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -26,10 +28,13 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
+        className={`${geistSans.variable} ${geistMono.variable} antialiased bg-slate-950 text-slate-50`}
       >
         <Providers>
-          {children}
+          <Navbar />
+          <main className="pt-24 min-h-screen">
+            {children}
+          </main>
         </Providers>
       </body>
     </html>

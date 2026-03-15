@@ -1,28 +1,68 @@
 import { LingoDotDevEngine } from 'lingo.dev/sdk';
 
-export const lingoConfig = {
-    apiKey: process.env.LINGO_DEV_API_KEY,
-};
-
-// Instantiate the actual Lingo.dev Engine
 const engine = new LingoDotDevEngine({
-    apiKey: lingoConfig.apiKey,
+    apiKey: process.env.LINGO_DEV_API_KEY as string,
 });
 
 export const lingo = {
-    // Uses LingoDotDevEngine to natively translate text dynamically
-    localizeText: async (text: string, lang: string = "en"): Promise<string> => {
-        if (lang === "en") return text;
+    /**
+     * Translate all string fields of an object in ONE API call.
+     * This is the preferred method — one round-trip instead of N.
+     */
+    localizeObject: async <T extends Record<string, any>>(obj: T, targetLocale: string = 'en'): Promise<T> => {
+        if (targetLocale === 'en') {
+            console.log('🌏 [Lingo] Skipping — target is English.');
+            return obj;
+        }
+
+        console.log(`🌏 [Lingo] localizeObject → targetLocale: "${targetLocale}"`);
+        console.log('🌏 [Lingo] Payload keys:', Object.keys(obj));
 
         try {
-            const translatedText = await engine.localizeText(text, {
-                sourceLocale: 'en',
-                targetLocale: lang
-            });
-            return translatedText;
-        } catch (error) {
-            console.error("Lingo.dev Translation error:", error);
-            return text; // Fallback to english if API fails
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(), 10_000);
+
+            const result = await engine.localizeObject(
+                obj,
+                { sourceLocale: 'en', targetLocale },
+                undefined,
+                controller.signal
+            ) as T;
+
+            clearTimeout(timer);
+            console.log('✅ [Lingo] localizeObject succeeded.');
+            return result;
+        } catch (err: any) {
+            console.error(`❌ [Lingo] localizeObject error: ${err.message || err}`);
+            return obj; // graceful fallback to English
         }
-    }
+    },
+
+    /**
+     * Translate a single string — kept for compatibility.
+     */
+    localizeText: async (text: string, targetLocale: string = 'en'): Promise<string> => {
+        if (targetLocale === 'en') return text;
+
+        console.log(`🌏 [Lingo] localizeText → targetLocale: "${targetLocale}"`);
+
+        try {
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(), 8_000);
+
+            const result = await engine.localizeText(
+                text,
+                { sourceLocale: 'en', targetLocale },
+                undefined,
+                controller.signal
+            );
+
+            clearTimeout(timer);
+            console.log(`✅ [Lingo] localizeText succeeded: "${result.slice(0, 60)}…"`);
+            return result;
+        } catch (err: any) {
+            console.error(`❌ [Lingo] localizeText error: ${err.message || err}`);
+            return text;
+        }
+    },
 };

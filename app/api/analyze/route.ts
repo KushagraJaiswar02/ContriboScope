@@ -2,9 +2,7 @@ import { NextResponse } from 'next/server';
 import { analyzeRepository } from '@/lib/github/analyzer';
 import { lingo } from '@/lib/lingo';
 import { GoogleGenAI } from '@google/genai';
-
-// Assuming you add OPENAI_API_KEY to your .env.local
-// Instantiation moved inside POST handler to prevent build errors
+import { cache } from '@/lib/redis';
 
 export async function POST(request: Request) {
     try {
@@ -14,56 +12,68 @@ export async function POST(request: Request) {
             return NextResponse.json({ error: "URL is required" }, { status: 400 });
         }
 
-        // Parse URL (e.g., https://github.com/facebook/react)
+        // Parse URL
         const match = url.match(/github\.com\/([^/]+)\/([^/]+)/);
         if (!match) {
             return NextResponse.json({ error: "Invalid GitHub URL" }, { status: 400 });
         }
 
         const [, owner, repo] = match;
+        const cacheKey = `analyze:${owner}:${repo}:${language}`;
 
-        // 1. Get raw metrics
-        // Pass session token if you implement passing it from the frontend to avoid rate limits
+        // 1. Check Cache
+        const cached = await cache.get<any>(cacheKey);
+        if (cached) {
+            console.log(`✅ [Analyze] Cache hit for ${cacheKey}`);
+            return NextResponse.json({ ...cached, cached: true });
+        }
+
+        // 2. Get raw metrics (now parallelized inside lib/github/analyzer.ts)
         const metrics = await analyzeRepository(owner, repo);
 
-        const ai = new GoogleGenAI({
+        const genAI = new GoogleGenAI({
             apiKey: process.env.GEMINI_API_KEY || 'dummy_key',
         });
 
-        // 2. Generate AI Summary using Gemini
-        const prompt = `
-      You are a wise open-source mentor. I have analyzed the repository ${owner}/${repo}.
-      Here are the metrics:
-      - Bus Factor: ${metrics.busFactor.coreContributors} core contributors make up 50% of the commits (Risk: ${metrics.busFactor.riskLevel}).
-      - Maintainer speed: ${metrics.maintainerActivity.speedRating} (Average response: ${metrics.maintainerActivity.averageResponseTimeHours} hours).
-      - Friendliness score: ${metrics.friendliness.score}/3 (Contributing: ${metrics.friendliness.hasContributing}, Conduct: ${metrics.friendliness.hasCodeOfConduct}, Templates: ${metrics.friendliness.hasIssueTemplates}).
-      
-      Provide a plain-language health summary of this repository for a potential contributor. Keep it to a maximum of 3 sentences. Be encouraging but honest about the risks. 
-    `;
+        // 3. Generate AI Summary
+        const prompt = `You are an Open Source Mentor. Analyze repository health metrics and provide a 2-3 sentence 'Contribution Readiness Report'.
+Inputs:
+Bus Factor: ${metrics.busFactor.coreContributors}
+Maintainer Response Time: ${metrics.maintainerActivity.averageResponseTimeHours} hours
+Documentation Score: ${metrics.friendliness.score}/3
+Instructions:
+1. If the Bus Factor is below 3, warn the user about project stability.
+2. If response times are over 7 days, set expectations for a slow review.
+3. Use an encouraging but honest tone. 
+4. Output your response in plain English.`;
 
-        let aiSummary = "Summary generation failed.";
+        let aiSummary = "";
         try {
-            const response = await ai.models.generateContent({
-                model: 'gemini-2.5-flash',
-                contents: prompt,
+            const response = await genAI.models.generateContent({
+                model: 'gemini-1.5-flash',
+                contents: prompt
             });
-            aiSummary = response.text || aiSummary;
+            aiSummary = response.text || "";
         } catch (e: any) {
-            console.error("Gemini Error", e);
-            // Fallback or ignore in case no key is provided during day 1/2 demo
-            aiSummary = `The repository has a ${metrics.busFactor.riskLevel} contributor risk, and ${metrics.maintainerActivity.speedRating.toLowerCase()} maintainer response times. It scored ${metrics.friendliness.score}/3 on friendliness indicators.`;
+            console.error("⚠️ [Analyze] Gemini failed or Quota hit. Using fallback summary.", e.message);
+            aiSummary = `This repository has a ${metrics.busFactor.riskLevel.toLowerCase()} contributor risk and ${metrics.maintainerActivity.speedRating.toLowerCase()} maintainer activity. Check the metrics below for details.`;
         }
 
-        // 3. Translate using Lingo.dev (mocked)
+        // 4. Translate using Lingo.dev
         const translatedSummary = await lingo.localizeText(aiSummary, language);
 
-        return NextResponse.json({
+        const responseData = {
             owner,
             repo,
             metrics,
             summary: translatedSummary,
             language
-        });
+        };
+
+        // 5. Store in Cache (24 hours)
+        await cache.set(cacheKey, responseData, 86400);
+
+        return NextResponse.json(responseData);
     } catch (error: any) {
         console.error("Analysis Error:", error);
         return NextResponse.json({ error: error.message || "Failed to analyze repository" }, { status: 500 });
